@@ -87,7 +87,9 @@ It is important to align with your team(s) on how you see it. Some may say that 
 
 ### Paradigm shift
 
-Remember I mentioned a paradigm shift in the beginning? Here we go. If you choose your View layer to be an entry point, then it may make sense to get your ViewModels or Interactors an async interface.
+Remember I mentioned a paradigm shift in the beginning? Here we go. 
+If you choose your View layer to be an entry point, then it may make sense to get your ViewModels or Interactors an async interface. (Note: I'm omitting any kind of actor-isolation code deliberately.)
+What does it mean to us as developers? It means that we enetered the Concurrency really early and we can benefit from async-awaiting our way up (or down, depending on how you look at it) the scene stack. If our networking code, or repositories, or image processors, or any other things that are usually async use Swift Concurrency, then we can simply those async entities. No need to create unstructured tasks anywhere else. And a nice bonus with SwiftUI, the tasks will be cancelled automatically by SwiftUI engine when the view goes off the hierarchy. This will cover 90% of our requirements.
 
 ```Swift
 @Observable
@@ -107,9 +109,9 @@ struct TasksView: View {
      List(viewModel.items) { item
         ItemRow(item)
      }
-       .task {
-          await viewModel.start()
-       }
+     .task {
+        await viewModel.start()
+     }
   }
 }
 ```
