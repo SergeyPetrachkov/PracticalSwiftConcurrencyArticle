@@ -59,6 +59,8 @@ To me, it doesn't. It's super abstract and it doesn't give me an idea of how I c
 We can't properly cover this topic without touching the concept of isolation. We'll dive deeper into it later.
 For now, let's find an entry point to the Concurrency for our iOS projects.
 
+### Swift UI Entry point
+
 If you're using SwiftUI and you're targeting recent iOS versions, then Apple have done the heavy lifting for you. 
 
 Each and every SwiftUI view has a `.task {}` [modifier](https://developer.apple.com/documentation/swiftui/view/task(priority:_:)) or even [this one](https://developer.apple.com/documentation/swiftui/view/task(id:priority:_:)). This can be your entry point. And for the most of the apps it will be enough. 
@@ -75,3 +77,10 @@ struct MyView: View {
 }
 ```
 
+Apple suggest using View layer of your app to be an entry point to the concurrency. And if you're using `task(id:priority:_:)` you get Tasks cancellation for free. 
+
+### UIKit Entry point
+
+But if you're using UIKit, the heavy lifting is on you. Depending on how you organize the presentation layer management, you need to choose which part of it will become the entry point. Is it going to be a ViewController (A View layer)? Or a ViewModel from MVVM, Interactor from VIP, Presenter from VIPER, or any other fancy word of your choosing.
+
+It is important to align with your team(s) on how you see it. Some may say that the tests coverage of Tasks cancellation is an absolute must. Then moving it from View layer makes sense, because testing Views is usually more cumbersome than other layers.
