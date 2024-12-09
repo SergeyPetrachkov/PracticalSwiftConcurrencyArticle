@@ -84,3 +84,32 @@ Apple suggest using View layer of your app to be an entry point to the concurren
 But if you're using UIKit, the heavy lifting is on you. Depending on how you organize the presentation layer management, you need to choose which part of it will become the entry point. Is it going to be a ViewController (A View layer)? Or a ViewModel from MVVM, Interactor from VIP, Presenter from VIPER, or any other fancy word of your choosing.
 
 It is important to align with your team(s) on how you see it. Some may say that the tests coverage of Tasks cancellation is an absolute must. Then moving it from View layer makes sense, because testing Views is usually more cumbersome than other layers.
+
+### Paradigm shift
+
+Remember I mentioned a paradigm shift in the beginning? Here we go. If you choose your View layer to be an entry point, then it may make sense to get your ViewModels or Interactors an async interface.
+
+```Swift
+@Observable
+final class TasksViewModel {
+    private(set) var items: [Item]
+    // ...
+    func start() async {
+       items = await repository.fetchAll()
+    }
+}
+
+struct TasksView: View {
+
+  var viewModel: TasksViewModel
+
+  var body: some View {
+     List(viewModel.items) { item
+        ItemRow(item)
+     }
+       .task {
+          await viewModel.start()
+       }
+  }
+}
+```
