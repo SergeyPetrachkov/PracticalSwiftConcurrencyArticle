@@ -55,3 +55,23 @@ Now we're talking. We have created an unstructured Task, we've started it (well,
 
 Does this snippet look good to you?
 To me, it doesn't. It's super abstract and it doesn't give me an idea of how I can use this task in my iOS project.
+
+We can't properly cover this topic without touching the concept of isolation. We'll dive deeper into it later.
+For now, let's find an entry point to the Concurrency for our iOS projects.
+
+If you're using SwiftUI and you're targeting recent iOS versions, then Apple have done the heavy lifting for you. 
+
+Each and every SwiftUI view has a `.task {}` [modifier](https://developer.apple.com/documentation/swiftui/view/task(priority:_:)) or even [this one](https://developer.apple.com/documentation/swiftui/view/task(id:priority:_:)). This can be your entry point. And for the most of the apps it will be enough. 
+```Swift
+struct MyView: View {
+
+  var body: some View {
+     Text("Hello there")
+       .task {
+          // here you go
+          let result = await longOperation()
+       }
+  }
+}
+```
+
