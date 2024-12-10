@@ -56,6 +56,30 @@ Now we're talking. We have created an unstructured Task, we've started it (well,
 Does this snippet look good to you?
 To me, it doesn't. It's super abstract and it doesn't give me an idea of how I can use this task in my iOS project.
 
+Let's add a bit more context to it.
+
+### The 3 don'ts of Swift Concurrency
+
+```Swift
+final class MyViewModel {
+// ...
+
+    func viewDidLoad() {
+       // ...
+       task = Task { @MainActor in
+          let result = try await longOperation()
+          doSomething(with: result)
+       }
+    }
+}
+```
+
+If we look closely at this code, we may find some flaws, but the important thing here is to understand:
+**The 3 don'ts of Swift Concurrency**:
+1) **Don't be deceived by selfless tasks** - we don't see any `self` keyword inside of the Task. But `self` will be retained implicitly.
+2) **Don't believe in try without catch** - this code will compile just fine. We call a throwing function and we don't catch any errors. So, in this case, if the longOperations throws an error, we won't get our result. And we won't get the error. It will be "silently suppressed". Task can accept throwing closures, so be careful and don't forget to catch your errors ;)
+3) **Don't forget about the main thread** - in Swift Concurrency we don't operate threads directly, but it's important to keep in mind, that UI-related stuff must execute on the main thread. In Swift Concurrency we have Actors isolation mechanism that will make sure in compile time that certain code is executed on the main thread or outside of it. For the simplicity we can look at it as at a binary system: main/non-main thread. In this case inside the Task closure we have `@MainActor in`, which means that the execution **will start** on the main actor, when we `await` the `longOperation`, there will be a suspension point created and the work will be offloaded to one of the threads from the cooperative pool (**important!** only if the longOperation doesn't have MainActor isolation and if there's no funky business like DispatchQueue.main.async somewhere there all of a sudden. So, don't mix GCD with Swift Concurrency!). Then, once the operation has finished, we'll get back to the main actor and execute `doSomething` on the main (again, if there's no funky business involved).
+
 We can't properly cover this topic without touching the concept of isolation. We'll dive deeper into it later.
 For now, let's find an entry point to the Concurrency for our iOS projects.
 
