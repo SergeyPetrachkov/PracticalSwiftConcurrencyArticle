@@ -86,6 +86,15 @@ final class MyViewModel {
    * **Important!** Rather than putting `[weak self]` there, think of how and when you're gonna **cancel** the task. If you don't trust me, trust the guys who invented [Swift Concurrency](https://github.com/swiftlang/swift/blob/c1ff2c339251c8adbdd63a08cb6ae45b339e15bd/stdlib/public/Concurrency/Task.swift#L80)
 
 We can't properly cover this topic without touching the concept of isolation. We'll dive deeper into it later.
+
+### Swift Concurrency. Where is the Concurrency?
+
+In the [previous chapter](https://medium.com/@petrachkovsergey/the-4-donts-of-swift-concurrency-5614f39f8246) we've touched the topic of 4 don'ts of Swift Concurrency. We used the word Concurrency a lot. But how do we run our stuff **concurrently**?
+We have a few options. In this article we'll take a look at those and say when we should use which one.
+
+
+
+
 For now, let's find an entry point to the Concurrency for our iOS projects.
 
 ### Swift UI Entry point
