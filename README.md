@@ -150,6 +150,9 @@ Things that you need to be aware of:
 
 Task groups are an essential part of Structured Concurrency. You can read the design doc [here](https://github.com/swiftlang/swift-evolution/blob/main/proposals/0304-structured-concurrency.md#task-groups-and-child-tasks). They can be [non-throwing, throwing](https://github.com/swiftlang/swift-evolution/blob/main/proposals/0304-structured-concurrency.md#task-groups), and [discarding](https://github.com/swiftlang/swift-evolution/blob/main/proposals/0381-task-group-discard-results.md).
 
+Task groups are perfect when you need to execute potentially infinite number of operations that return the same result type (but the usecases are not limited to just that).
+
+You may be tempted to use Swift Concurrency and task groups to load images in your media sync process or process media files. But be careful with that. If you use `UIImage`, you'll get RAM spikes because of how images are presented in memory. And you may also starve the threads in the cooperative pool. The number of the threads is fixed. So, **swift concurrency is not the best candidate for long and expensive operations**. [More can be found here](https://swiftrocks.com/how-async-await-works-internally-in-swift) and [here](https://github.com/apple-oss-distributions/libdispatch).
 
 Let's get back to building our corporate task tracker. Let's say we need to download ticket details that are associated with a build.
 
@@ -159,7 +162,7 @@ Let's get back to building our corporate task tracker. Let's say we need to down
 4) Then I await the tasks via `for await` of `AsyncSequence`
 5) And then I return the array of tickets.
 
-```
+```Swift
 struct FetchTicketsUseCase {
 
     private let ticketsRepository: any TicketsRepository
@@ -207,9 +210,9 @@ You need to execute multiple async operations and show the results in the same o
 
 And then you'd start talking about how DispatchGroups are cool and stuff. 
 
-Now, let's do it in a swift-concurrent manner.
+Now, let's do it with swift concurrency.
 
-```
+```Swift
 func loadSongsInfo(request: Request) async -> [SongInfo] {
         await withTaskGroup(of: (Int, SongInfo?).self) { group in
             for enumeratedSearcher in otherStreamingsSearchers.enumerated() {
@@ -229,6 +232,8 @@ func loadSongsInfo(request: Request) async -> [SongInfo] {
         }
 }
 ```
+
+I hope you enjoyed this chapter. In the upcoming chapters we're finally going to talk about actors and we'll try to find an entry point into Concurrency in our iOS projects :)
 
 
 For now, let's find an entry point to the Concurrency for our iOS projects.
