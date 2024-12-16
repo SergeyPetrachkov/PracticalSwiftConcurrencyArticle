@@ -146,7 +146,89 @@ Things that you need to be aware of:
 * the order of execution is not determined, we don't know if versions get downloaded before the project and vice versa. And we should not care about it! If we do, then we need to re-think how we organize this code.
 * error handling is crucial here. If one of the tasks throws, then all the results will be lost.
 
+#### Task Groups
 
+Task groups are an essential part of Structured Concurrency. You can read the design doc [here](https://github.com/swiftlang/swift-evolution/blob/main/proposals/0304-structured-concurrency.md#task-groups-and-child-tasks). They can be [non-throwing, throwing](https://github.com/swiftlang/swift-evolution/blob/main/proposals/0304-structured-concurrency.md#task-groups), and [discarding](https://github.com/swiftlang/swift-evolution/blob/main/proposals/0381-task-group-discard-results.md).
+
+
+Let's get back to building our corporate task tracker. Let's say we need to download ticket details that are associated with a build.
+
+1) We create a TaskGroup with a special function `withThrowingTaskGroup`.
+2) We specify a return type of a **single** task within the group. It's gonna be an optional `Ticket`, because I don't care about the tickets that failed to decode for example (unless it's a network issue).
+3) For each of the tickets I add a new task to the group by `group.addTask`. I try to load ticket details. If it's a network problem, I **throw a CancellationError which cancells the whole task group**. If it's a different issue I just print an error because I'm lazy ;)
+4) Then I await the tasks via `for await` of `AsyncSequence`
+5) And then I return the array of tickets.
+
+```
+struct FetchTicketsUseCase {
+
+    private let ticketsRepository: any TicketsRepository
+
+    init(ticketsRepository: any TicketsRepository) {
+        self.ticketsRepository = ticketsRepository
+    }
+
+    func execute(for version: Version) async throws -> [Ticket] {
+        try await withThrowingTaskGroup(of: Ticket?.self) { group in
+            for ticketKey in version.associatedTicketKeys {
+                group.addTask {
+                    do {
+                        return try await ticketsRepository.getTicket(key: ticketKey)
+                    } catch is URLError { // for the simplicity I use this to indicate the network error, but of course it's not 100% valid
+                        throw CancellationError()
+                    } catch {
+                        print(error) // I'm lazy and I don't care about the errors :) 
+                        return nil
+                    }
+                }
+            }
+            var tickets: [Ticket] = []
+            for try await ticket in group {
+                if let ticket {
+                    tickets.append(ticket)
+                }
+            }
+            return tickets
+        }
+    }
+}
+```
+
+Important things to keep in mind:
+* error handling is important, catch your errors or you'll lose the progress
+* the order of execution is not determined: if we start tasks in this order: 1,2,3,4,5 we may get the results in any random order imaginable, so if you need your results sorted in the same order as you started the tasks, you have to do it yourself
+* no child task can outlive it's parent, that's the beauty of structured concurrency. All tasks will be finished before you get back to the awaited task group.
+
+P.S. 
+
+Remember how people would ask questions like this during iOS interviews?
+
+You need to execute multiple async operations and show the results in the same order as you enqueued those operations. How would you do that?
+
+And then you'd start talking about how DispatchGroups are cool and stuff. 
+
+Now, let's do it in a swift-concurrent manner.
+
+```
+func loadSongsInfo(request: Request) async -> [SongInfo] {
+        await withTaskGroup(of: (Int, SongInfo?).self) { group in
+            for enumeratedSearcher in otherStreamingsSearchers.enumerated() {
+                group.addTask {
+                    do {
+                        return try await (enumeratedSearcher.offset, enumeratedSearcher.element.search(request: request))
+                    } catch {
+                        return (enumeratedSearcher.offset, nil)
+                    }
+                }
+            }
+            var results: [(Int, SongInfo?)] = []
+            for await result in group {
+                results.append(result)
+            }
+            return results.sorted(by: { $0.0 < $1.0 }).compactMap { $0.1 }
+        }
+}
+```
 
 
 For now, let's find an entry point to the Concurrency for our iOS projects.
