@@ -92,6 +92,60 @@ We can't properly cover this topic without touching the concept of isolation. We
 In the [previous chapter](https://medium.com/@petrachkovsergey/the-4-donts-of-swift-concurrency-5614f39f8246) we've touched the topic of 4 don'ts of Swift Concurrency. We used the word Concurrency a lot. But how do we run our stuff **concurrently**?
 We have a few options. In this article we'll take a look at those and say when we should use which one.
 
+If we want to run things concurrently, we now have two instruments:
+* async let syntax
+* task groups (throwing/non-throwing/discarding)
+
+One might say: we also have unstructured tasks. Well, yes, we do. But those are only good if we don't need to synchronize the execution and handle results. In most (if not all) cases we'd benefit from structured concurrency.
+
+#### Async let
+
+It is a special syntax sugar introduced in Swift 5.5 that allows use to start multiple async jobs in an async context and later await them as single values, or as a tuple, or as an array. You can find the detailed designs of async let [here](https://github.com/swiftlang/swift-evolution/blob/main/proposals/0317-async-let.md).
+
+`Async let` is very convenient when you need to run a finite number of jobs that return values of different type, and then use those values somewhere. Under the hood it spawns a new Task that inherits the local context and actor isolation. It's recommended that you await it, otherwise you might end up with some unexpected (not unexpected anymore!) behavior as described [here](https://github.com/swiftlang/swift-evolution/blob/main/proposals/0317-async-let.md#async-let-error-propagation)
+
+```Swift
+// func boom() throws -> Int { throw Boom() }
+
+func work() async -> Int {
+  async let work: Int = boom()
+  // never await work...
+  return 0
+  // implicitly: cancels work
+  // implicitly: awaits work, discards errors
+}
+```
+
+Okay, let's get practical.
+
+Let's imagine that we are building a corporate tasks and builds tracker. We want to fetch details of a project and build versions that are associated with this project.
+We can create a usecase like this:
+
+```Swift
+struct FetchProjectAndBuildsUseCase {
+
+    private let versionsRepository: any VersionsRepository
+    private let projectsRepository: any ProjectsRepository
+
+    init(versionsRepository: any VersionsRepository, projectsRepository: any ProjectsRepository) {
+        self.versionsRepository = versionsRepository
+        self.projectsRepository = projectsRepository
+    }
+
+    func execute(projectId: Int) async throws -> (project: Project, versions: [Version]) {
+        async let versions = versionsRepository.getVersions(request: .init(projectId: projectId))
+        async let project = projectsRepository.getProject(by: projectId)
+
+        let result = try await (project, versions)
+        return result
+    }
+}
+```
+
+Things that you need to be aware of:
+* the order of execution is not determined, we don't know if versions get downloaded before the project and vice versa. And we should not care about it! If we do, then we need to re-think how we organize this code.
+* error handling is crucial here. If one of the tasks throws, then all the results will be lost.
+
 
 
 
