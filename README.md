@@ -236,6 +236,19 @@ func loadSongsInfo(request: Request) async -> [SongInfo] {
 I hope you enjoyed this chapter. In the upcoming chapters we're finally going to talk about actors and we'll try to find an entry point into Concurrency in our iOS projects :)
 
 
+### Actors, isolation, sendability: practical tips for iOS developers
+
+With the new concurrency model, we've got quite a few new keywords and a bunch of concepts that we need to learn and adopt in our daily work. But it also brings fresh ideas to the concepts we've all been taught about one way or another. Let's go.
+
+#### Thread safety.
+Old but gold. The goal of Swift concurrency is to provide **compile-time safety**. In other words, the code that can cause data races (not race conditions) should not compile. It's achieved via actors model and the concept of sendability.
+#### Sendability.
+It's one of the most confusing parts for many developers. Let's not be too boring and get the practical side of it. When we say something is _sendable_, we mean that it's safe to pass that something between concurrency contexts (from one Task to another simply put). `Sendable` is just an empty protocol that acts as a marker for a compiler. When compiler sees a type that conforms to Sendable, it goes like this:
+
+Aha, this type conforms to Sendable, let me do a quick check:
+1) Is it an actor? If yes, then it's sendable by default. The nature of actors is that they are deadlock-free, datarace-safe. If it's not an actor
+2)  is everything inside this type also Sendable?
+
 For now, let's find an entry point to the Concurrency for our iOS projects.
 
 ### Swift UI Entry point
