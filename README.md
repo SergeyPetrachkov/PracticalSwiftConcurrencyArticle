@@ -246,8 +246,9 @@ Old but gold. The goal of Swift concurrency is to provide **compile-time safety*
 It's one of the most confusing parts for many developers. Let's not be too boring and get the practical side of it. When we say something is _sendable_, we mean that it's safe to pass that something between concurrency contexts (from one Task to another simply put). `Sendable` is just an empty protocol that acts as a marker for a compiler. When compiler sees a type that conforms to Sendable, it goes like this:
 
 Aha, this type conforms to Sendable, let me do a quick check:
-1) Is it an actor? If yes, then it's sendable by default. The nature of actors is that they are deadlock-free, datarace-safe. If it's not an actor
-2)  is everything inside this type also Sendable?
+1) Is it an actor? If yes, then it's sendable by default. The nature of actors is that they are deadlock-free, datarace-safe. If it's not an actor, then we go further.
+2) Is it a value type? (Struct or enum)? Value types are sendable, but sometimes you need to add the `: Sendable` explicitly, for example if you're dealing with modular apps and you have public structs defined in one module and you want to use them from another module. [More cases here](https://developer.apple.com/documentation/swift/sendable#Sendable-Structures-and-Enumerations)
+3) Is it a class? To satisfy the sendability requirements, the class must be final, contain no mutable shared state, contain only sendable properties, have no superclass (or only NSObject). There's one more way: if the class is isolated to the main actor. These classes can have stored properties that are mutable and nonsendable, because MainActor will take case of the thread-safety (we'll talk about it later). [More here](https://developer.apple.com/documentation/swift/sendable#Sendable-Classes)
 
 For now, let's find an entry point to the Concurrency for our iOS projects.
 
