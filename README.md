@@ -260,9 +260,69 @@ When does Apple use unchecked Sendable?
 
 You can check out [my article](https://medium.com/@petrachkovsergey/mutex-in-swift-lang-8d241db2e543) about Mutex<T> in Swift language. TL;DR it's a wrapper over os_unfair_lock (for iOS and macOS) and the wrapper is marked as unchecked Sendable :) 
 
-But anyway, if we want to use Swift Concurrency, we can't skip the concept of sendability. Mostly because it's a building brick of the concept of Isolation.
+What else can be Sendable?
+
+Closures and functions. Instead of conforming to the Sendable protocol, you mark sendable functions and closures with the @Sendable attribute. Any values that the function or closure captures must be sendable. In addition, sendable closures must use only by-value captures, and the captured values must be of a sendable type.
+
+Ok, if we want to use Swift Concurrency, we can't skip the concept of sendability. Mostly because it's a building brick of the concept of Isolation.
 
 #### Isolation
+
+During WWDC speakers talked about isolation with an analogy of Sea of Concurrency and Islands of isolation. You can check out [this wwdc video](https://developer.apple.com/videos/play/wwdc2022/110351/). And for a long time I was pissed off with this analogy, and wanted to come up with my own that would be clearer :D I failed, of course.
+During workshops I'm trying to show the synchronization and isolation with some hand gestures, but it's also not that accurate and clear.
+
+Let's try and formulate this without analogies :) Let's just embrace the "new" jargon.
+
+**Data isolation**
+
+Swift Concurrency is all about compile-time thread safety. The compiler must be able to understand and verify the safety of all mutable state. The mechanism is called data isolation. Data isolation guarantees mutually exclusive access to a mutable state. It is a form of synchronization, conceptually similar to a lock. But unlike a lock, everything happens at compile-time. 
+We work with data isolation either statically or dynamically. Static is unaffected in the runtime. Whenever we put some keywords and/or annotations to our code, it's static.
+Sometimes we can't do that. For example when we're working with ObjC or any other non-Swift code. And also when we're dealing with the code that we don't own and that doesn't obey the rules of the data isolation. Then it's dynamic isolation's turn. You can read more [here](https://www.swift.org/migration/documentation/swift-6-concurrency-migration-guide/incrementaladoption/#Dynamic-Isolation)
+
+What's more important is to talk about isolation domains.
+
+**Isolation domains**
+
+Data isolation is _a mechanism_. Isolation domain is a _unit of isolation._ 
+All our code belongs to isolation domains.
+
+1) non-isolated
+   ```Swift
+   struct Ticket {
+      let id: UUID
+      let title: String
+      let description: String?
+   }
+
+   final class TicketsRepositoryImpl: TicketsRepository {
+      func getTickets(request: TicketsRequest) async -> TicketsResponse {}
+   }
+   ```
+2) isolated to an actor
+   ```Swift
+   actor TicketsCachingRepository: TicketsRepository {
+       private var cachedTickets: [Ticket] = []
+       func getTickets(request: TicketsRequest) async -> TicketsResponse {}
+
+       nonisolated func funFact() -> String {
+           "I can't access cachedTickets from here, I can do some other stuff like return this string :)"
+       }
+   }
+   ```  
+3) isolated to a global actor
+   ```
+   @MainActor
+   final class TicketsViewModel {
+      @Published var viewState: TicketsViewState = .initial
+   }
+   ```
+
+A Task always has an isolation domain. They can be isolated to an actor instance, a global actor, or could be non-isolated. This isolation can be established manually, but can also be inherited automatically based on context. Task isolation, just like all other Swift code, determines what mutable state is accessible.
+Tasks can run both synchronous and asynchronous code. Regardless of the structure and how many tasks are involved, functions in the same isolation domain cannot run concurrently with each other. There will only ever be one task running synchronous code for any given isolation domain.
+
+Isolation domains can be inherited and inferred.
+
+
 
 
 
