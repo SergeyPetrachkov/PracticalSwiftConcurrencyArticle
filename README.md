@@ -320,6 +320,8 @@ All our code belongs to isolation domains.
 A Task always has an isolation domain. They can be isolated to an actor instance, a global actor, or could be non-isolated. This isolation can be established manually, but can also be inherited automatically based on context. Task isolation, just like all other Swift code, determines what mutable state is accessible.
 Tasks can run both synchronous and asynchronous code. Regardless of the structure and how many tasks are involved, functions in the same isolation domain cannot run concurrently with each other. There will only ever be one task running synchronous code for any given isolation domain.
 
+Going through isolation domains can only be done _via awaiting_. We'll talk about it in a bit.
+
 **Isolation domains can be inherited and inferred.**
 
 So, if you open UIKit, you'll see that everything UI-related is isolated to the MainActor. All your UIView, UIViewController, UIWindow, etc. So, if you inherit from any of that type, you'll inherit the MainActor isolation.
@@ -358,7 +360,24 @@ And global actor is just an actor that conforms to `GlobalActor` protocol and in
   // ....
 }
 ```
-MainActor is a special one, it's probably the most important actor for iOS and macOS developers.
+
+You can find more under-the-hood stuff [here](https://swiftrocks.com/how-async-await-works-internally-in-swift)
+
+#### MainActor
+
+MainActor is a special one, it's probably the most important actor for iOS and macOS developers. It tries to make sure that the code that is isolated to the main actor runs on the main thread. Why did I say "tries to"? Well, because we can still break things by mixing up GCD with Swift Concurrency.
+So, don't! :) 
+
+MainActor and rules of isolation make impact on the whole mobile development: on how we organise our modules, on how we split the app into layers, and on how we generally architect our apps.
+
+As we mentioned above, all communications between different isolation domains can only be done via `await`. We create a suspension point, run some code, then jump back and synchronize contexts. But **within** the same domain we can execute our synchronous code without having to await anything.
+One ViewController can talk to another ViewController without awaiting anything, because they have the same MainActor isolation.
+
+
+
+
+
+
 
 
 For now, let's find an entry point to the Concurrency for our iOS projects.
