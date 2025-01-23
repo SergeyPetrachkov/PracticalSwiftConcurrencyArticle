@@ -242,6 +242,7 @@ With the new concurrency model, we've got quite a few new keywords and a bunch o
 
 #### Thread safety.
 Old but gold. The goal of Swift concurrency is to provide **compile-time safety**. In other words, the code that can cause data races (not race conditions) should not compile. It's achieved via actors model and the concept of sendability.
+
 #### Sendability.
 It's one of the most confusing parts for many developers. Let's not be too boring and get the practical side of it. When we say something is _sendable_, we mean that it's safe to pass that something between concurrency contexts (from one Task to another simply put). `Sendable` is just an empty protocol that acts as a marker for a compiler. When compiler sees a type that conforms to Sendable, it goes like this:
 
@@ -249,6 +250,21 @@ Aha, this type conforms to Sendable, let me do a quick check:
 1) Is it an actor? If yes, then it's sendable by default. The nature of actors is that they are deadlock-free, datarace-safe. If it's not an actor, then we go further.
 2) Is it a value type? (Struct or enum)? Value types are sendable, but sometimes you need to add the `: Sendable` explicitly, for example if you're dealing with modular apps and you have public structs defined in one module and you want to use them from another module. [More cases here](https://developer.apple.com/documentation/swift/sendable#Sendable-Structures-and-Enumerations)
 3) Is it a class? To satisfy the sendability requirements, the class must be final, contain no mutable shared state, contain only sendable properties, have no superclass (or only NSObject). There's one more way: if the class is isolated to the main actor. These classes can have stored properties that are mutable and nonsendable, because MainActor will take case of the thread-safety (we'll talk about it later). [More here](https://developer.apple.com/documentation/swift/sendable#Sendable-Classes)
+4) None of the above? Well, mate, no. It's not Sendable.
+
+But what if you know that the class is thread-safe and you need the compiler to shut up? Then you can use `@unchecked Sendable`. You can put it to your class and it will be excluded from further checks. 
+When can we use the unchecked sendable? **Ideally**, only when we are certain that the class is data-race free and we've achieved that via Locks or DispatchQueues or Atomics or any other way.
+But sometimes we may use it in tests, when generating mocks for our interfaces. Most of the times we don't really need thread safe mocks, do we? (Unless we test multithreaded code).
+
+When does Apple use unchecked Sendable?
+
+You can check out [my article](https://medium.com/@petrachkovsergey/mutex-in-swift-lang-8d241db2e543) about Mutex<T> in Swift language. TL;DR it's a wrapper over os_unfair_lock (for iOS and macOS) and the wrapper is marked as unchecked Sendable :) 
+
+But anyway, if we want to use Swift Concurrency, we can't skip the concept of sendability. Mostly because it's a building brick of the concept of Isolation.
+
+#### Isolation
+
+
 
 For now, let's find an entry point to the Concurrency for our iOS projects.
 
