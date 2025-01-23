@@ -310,7 +310,7 @@ All our code belongs to isolation domains.
    }
    ```  
 3) isolated to a global actor
-   ```
+   ```Swift
    @MainActor
    final class TicketsViewModel {
       @Published var viewState: TicketsViewState = .initial
@@ -320,10 +320,45 @@ All our code belongs to isolation domains.
 A Task always has an isolation domain. They can be isolated to an actor instance, a global actor, or could be non-isolated. This isolation can be established manually, but can also be inherited automatically based on context. Task isolation, just like all other Swift code, determines what mutable state is accessible.
 Tasks can run both synchronous and asynchronous code. Regardless of the structure and how many tasks are involved, functions in the same isolation domain cannot run concurrently with each other. There will only ever be one task running synchronous code for any given isolation domain.
 
-Isolation domains can be inherited and inferred.
+**Isolation domains can be inherited and inferred.**
 
+So, if you open UIKit, you'll see that everything UI-related is isolated to the MainActor. All your UIView, UIViewController, UIWindow, etc. So, if you inherit from any of that type, you'll inherit the MainActor isolation.
 
+You can read more about data isolation and isolation domains [here](https://www.swift.org/migration/documentation/swift-6-concurrency-migration-guide/dataracesafety/)
 
+#### Actors
+
+Actor is a new construct in the Swift language. Actors can also be global. There's no magic behind the actos. Well, maybe a little bit.
+
+If you look into the Swift lang repo, you'll find that there's an Actor protocol:
+
+```Swift
+public protocol Actor: AnyObject, Sendable {
+    nonisolated var unownedExecutor: UnownedSerialExecutor { get }
+}
+```
+And after some "magic", when you write:
+
+```Swift
+actor MyActor {}
+```
+
+to the compiler it's something like:
+
+```Swift
+
+final class MyActor: Actor {}
+```
+
+And global actor is just an actor that conforms to `GlobalActor` protocol and in result has a singleton:
+
+```Swift
+@globalActor public actor MainActor: GlobalActor {
+  public static let shared = MainActor()
+  // ....
+}
+```
+MainActor is a special one, it's probably the most important actor for iOS and macOS developers.
 
 
 For now, let's find an entry point to the Concurrency for our iOS projects.
