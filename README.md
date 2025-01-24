@@ -423,6 +423,8 @@ final class MyViewController: UIViewController {
 Ideally, we want our entities to talk to each other without many suspension points. We only want to await stuff when it's absolutely necessary.
 So, try to think about where your code belongs.
 
+#### Isolation and popular entities
+
 Let's go through a few popular entities:
 1. Coordinator/Router/Navigator. It's an entity that is responsible for navigation. Showing one screen from another screen. This can only happen from the main thread. This already happens on the main thread, otherwise there's a runtime crash. But Swift Concurrency model requires explicitness. So, it makes sense to isolate your coordinators/routers/navigators to the MainActor. Just put it on top of the class.
 2. ViewController/UIKit View/SwiftUI View - already isolated to the main actor for us by Apple. Nothing to do from our side :)
@@ -589,6 +591,12 @@ We just inject this actor into our usecase, and we're good to go :) Clean archit
 ```Swift
 FetchTicketsUseCase(ticketsRepository: TicketsCacheActor(TicketsRepositoryImpl(api: api))))
 ```
+
+#### Where to go from here
+
+These are the simple basics of the isolation. And there's more to it. But I hope this can help you out to start the journey and face Swift Concurrency challenges with more context.
+Next time we'll discuss what is the best place for an entry point to Swift Concurrency. We'll also talk about Dependency Injection, containers, popular frameworks, modular apps and Swift Concurrency, and other challenges of the real world like bridging async-await with the old code, using unsafe Sendables, nonisolated functions, etc.
+
 
 For now, let's find an entry point to the Concurrency for our iOS projects.
 
