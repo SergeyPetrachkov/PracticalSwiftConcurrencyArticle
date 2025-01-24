@@ -373,7 +373,52 @@ MainActor and rules of isolation make impact on the whole mobile development: on
 As we mentioned above, all communications between different isolation domains can only be done via `await`. We create a suspension point, run some code, then jump back and synchronize contexts. But **within** the same domain we can execute our synchronous code without having to await anything.
 One ViewController can talk to another ViewController without awaiting anything, because they have the same MainActor isolation.
 
+Let it sink in. 
 
+Two entities isolated to the same actor can talk to each other without having to await anything (of course if they use sync functions).
+Take a look at this code snippet. Don't mind the unpretty `weak var viewController`, it's a shortcut to show the problem.
+
+```Swift
+// This is nonisolated
+final class MyNonIsolatedViewModel {
+
+	weak var viewController: MyViewController?
+
+	func start() {
+		// compilation error: Call to main actor-isolated method 'displayData()' in a synchronous nonisolated context
+		viewController?.displayData()
+	}
+}
+
+// This is explicitly isolated to the MainActor
+@MainActor
+final class MyIsolatedViewModel {
+
+	weak var viewController: MyViewController?
+
+	func start() {
+		// compiles just fine, because we don't cross isolation domains
+		viewController?.displayData()
+	}
+}
+
+// This inherits MainActor isolation from UIViewController
+final class MyViewController: UIViewController {
+
+	let isolatedViewModel = MyIsolatedViewModel()
+	let nonIsolatedViewModel = MyNonIsolatedViewModel()
+
+	override func viewDidLoad() {
+		super.viewDidLoad()
+		isolatedViewModel.viewController = self
+		nonIsolatedViewModel.viewController = self
+		nonIsolatedViewModel.start()
+	}
+
+	// This is also isolated to the main actor
+	func displayData() {}
+}
+```
 
 
 
