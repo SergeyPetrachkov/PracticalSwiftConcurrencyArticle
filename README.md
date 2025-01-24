@@ -427,11 +427,168 @@ Let's go through a few popular entities:
 1. Coordinator/Router/Navigator. It's an entity that is responsible for navigation. Showing one screen from another screen. This can only happen from the main thread. This already happens on the main thread, otherwise there's a runtime crash. But Swift Concurrency model requires explicitness. So, it makes sense to isolate your coordinators/routers/navigators to the MainActor. Just put it on top of the class.
 2. ViewController/UIKit View/SwiftUI View - already isolated to the main actor for us by Apple. Nothing to do from our side :)
 3. ViewModel from MVVM. What does it do? It receives signals from View layer (isolated to the main actor!), it publishes changes back to the View layer. So, it makes sense to isolate your ViewModel to the MainActor. It will also allow the VM to be Sendable (it will probably have some mutable state, so the MainActor comes in handy). What else does the VM do? It talks to services/repositories/usecases/providers/whatever.
-4. Service/Repository/Usecase/Provider - 
+4. Service/Repository/Usecase/Provider/Worker - what are these? Well, in many projects people use different names, but let's just say these are the entities that do something business logic-related. Often it's an execution of some async code. In GCD world we often create queues to handle work there. In Swift Concurrency world we don't need it. Just leave those entities nonisolated or _actor-agnostic_ and keep the interface clean and async.
+5. VIP stack. Interactor and Presenter. Interactor and Presenter are serving on purpose: split responsibilities of an object like ViewModel into smaller chunks. So, Interactor receives signals from View, asks Workers to do something, get the data, pushes it to Presenter, and then Presenter maps it to UI entities and pushes then to View. Long story short: Interactor and Presenter belong to MainActor. But of course there may be some performance optimisations. If we don't want to map things on the main thread, we'll benefit from `nonisolated` functions within Presenter. Just keep them _pure_ and _async_.
+6. Delegates. Well, delegates have been with us since ObjC era. And they look kinda redundant in the world of modern Swift, when we have closures, publishers, async streams and stuff. But it's still something many developers use. Okay. Think about who's your delegate talking to. If that's a delegate talking to a coordinator, you know the answer. Put MainActor on top of that protocol. UI entities must do their stuff synchronously on the main thread. No other way. A delegate of a service? (Well, maybe it's time for refactoring) Keep it nonisolated.
 
+And during these transitions you'll get many challenges of the added constraints. So, think about how many layers you want to have in your apps architecture. Think about isolation domains. Think about sendability. Think about modularisation.
 
+Talk is cheap. Show me the code.
 
+Remember we were building a corporate issues tracker?
+Let's build a screen that will show an internal release version with the associated Jira ticket keys.
 
+We'll need a usecase that will download the JIRA tickets in parallel.
+* This usecase is Sendable, because it doesn't contain any mutable state. All the components of the usecase are also Sendable.
+* This usecase is non-isolated to any Actor. It's actor-agnostic.
+```Swift
+protocol FetchTicketsUseCaseProtocol: Sendable {
+    func execute(for version: Version) async throws -> [Ticket]
+}
+
+struct FetchTicketsUseCase {
+    private let ticketsRepository: any TicketsRepository
+
+    init(ticketsRepository: any TicketsRepository) {
+        self.ticketsRepository = ticketsRepository
+    }
+
+    func execute(for version: Version) async throws -> [Ticket] {
+        try await withThrowingTaskGroup(of: Ticket?.self) { group in
+            for ticketKey in version.associatedTicketKeys {
+                group.addTask {
+                    do {
+                        return try await ticketsRepository.getTicket(key: ticketKey)
+                    } catch is URLError { // for the simplicity I use this to indicate the network error, but of course it's not 100% valid
+                        throw CancellationError()
+                    } catch {
+                        print(error) // I'm lazy and I don't care about the errors :) 
+                        return nil
+                    }
+                }
+            }
+            var tickets: [Ticket] = []
+            for try await ticket in group {
+                if let ticket {
+                    tickets.append(ticket)
+                }
+            }
+            return tickets
+        }
+    }
+}
+```
+
+We'll also need a ViewModel.
+* The ViewModel will be isolated to the main actor
+* The ViewModel will handle the entry point to the concurrency (and we'll discuss it more in the next article)
+* The ViewModel will talk to our usecase, load the tickets, map it to the state and publish it to the View layer (wow, too many responsibilities? Maybe yes, maybe no).
+
+```Swift
+@MainActor
+final class VersionDetailsViewModel: ObservableObject {
+
+    // MARK: - Injectables
+    private let version: Version
+    private let fetchTicketsUsecase: FetchTicketsUseCaseProtocol
+
+    // MARK: - State
+    @Published private(set) var state: State
+    private var currentTask: Task<Void, Never>?
+
+    // MARK: - Init
+    init(version: Version, fetchTicketsUsecase: FetchTicketsUseCaseProtocol) {
+        self.version = version
+        self.fetchTicketsUsecase = fetchTicketsUsecase
+        self.state = .loading(VersionDetailsLoadingView.State(version: version))
+    }
+
+    // MARK: - Sync interface controlled by us
+    // This is isolated to the main actor
+    func send(_ action: Action) {
+        switch action {
+        case .onAppear, .onReload:
+            currentTask?.cancel()
+            currentTask = Task {
+                await fetchData()
+            }
+        case .onDisappear:
+            currentTask?.cancel()
+        }
+    }
+
+    // MARK: - Private logic
+
+    private func fetchData() async {
+        do {
+            // suspension point created, we're jumping off the Main Thread. And since our Usecase is non-isolated to anything, we're sure of it.
+            let tickets = try await fetchTicketsUsecase.execute(for: version)
+            // we're back
+            if !Task.isCancelled {
+                // this will be published on the main thread
+                state = .loaded(.init(version: version, tickets: tickets))
+            } else {
+                print("VM is stopped. State won't be published")
+            }
+        } catch {
+            state = .failed(State.ErrorViewModel(message: error.localizedDescription))
+        }
+    }
+}
+```
+
+Let's spice things up a bit. Let's say I want my tickets to be cached. I don't want to download them every time I open the screen.
+* Does it mean that our Repo/Usecase/Provider/Service/Worker layer becomes stateful? Well, yes. 
+* Do we need isolation to protect it from data races? Yes!
+* Do we need main actor? No!
+
+This actor also handles the actor re-entrancy problem, so if we're already loading something, we don't start a new loading task, we're awaiting the existing one.
+
+```Swift
+actor TicketsCacheActor: TicketsRepository {
+
+    private let repository: TicketsRepository
+    private var tickets: [String: Task<Ticket, Error>] = [:]
+
+    init(repository: TicketsRepository) {
+        self.repository = repository
+    }
+
+    func getTickets() async throws -> [CorporateTestflightDomain.Ticket] {
+        try await repository.getTickets()
+    }
+
+    func getTicket(key: String) async throws -> CorporateTestflightDomain.Ticket {
+        print("Entering actor for \(key)")
+        if let ticketTask = tickets[key] {
+            print("Return cached value by \(key)")
+            do {
+                let value = try await ticketTask.value
+                return value
+            } catch {
+                print("Previously cached task for the ticket \(key) returned error \(error). Will start a new task.")
+            }
+        }
+        let newTicketTask = fetchTicketTask(key: key)
+        print("Returning value by fetching \(key)")
+        return try await newTicketTask.value
+    }
+
+    private func fetchTicketTask(key: String) -> Task<Ticket, Error> {
+        print("Fetching value by \(key)")
+        let ticketTask = Task { try await repository.getTicket(key: key) }
+        print("Caching value by \(key)")
+        tickets[key] = ticketTask
+        return ticketTask
+    }
+}
+```
+
+We just inject this actor into our usecase, and we're good to go :) Clean architecture :D 
+
+```Swift
+FetchTicketsUseCase(ticketsRepository: TicketsCacheActor(TicketsRepositoryImpl(api: api))))
+```
 
 For now, let's find an entry point to the Concurrency for our iOS projects.
 
