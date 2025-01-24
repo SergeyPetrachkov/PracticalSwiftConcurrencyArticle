@@ -363,7 +363,7 @@ And global actor is just an actor that conforms to `GlobalActor` protocol and in
 
 You can find more under-the-hood stuff [here](https://swiftrocks.com/how-async-await-works-internally-in-swift)
 
-#### MainActor
+#### Practical isolation
 
 MainActor is a special one, it's probably the most important actor for iOS and macOS developers. It tries to make sure that the code that is isolated to the main actor runs on the main thread. Why did I say "tries to"? Well, because we can still break things by mixing up GCD with Swift Concurrency.
 So, don't! :) 
@@ -420,6 +420,14 @@ final class MyViewController: UIViewController {
 }
 ```
 
+Ideally, we want our entities to talk to each other without many suspension points. We only want to await stuff when it's absolutely necessary.
+So, try to think about where your code belongs.
+
+Let's go through a few popular entities:
+1. Coordinator/Router/Navigator. It's an entity that is responsible for navigation. Showing one screen from another screen. This can only happen from the main thread. This already happens on the main thread, otherwise there's a runtime crash. But Swift Concurrency model requires explicitness. So, it makes sense to isolate your coordinators/routers/navigators to the MainActor. Just put it on top of the class.
+2. ViewController/UIKit View/SwiftUI View - already isolated to the main actor for us by Apple. Nothing to do from our side :)
+3. ViewModel from MVVM. What does it do? It receives signals from View layer (isolated to the main actor!), it publishes changes back to the View layer. So, it makes sense to isolate your ViewModel to the MainActor. It will also allow the VM to be Sendable (it will probably have some mutable state, so the MainActor comes in handy). What else does the VM do? It talks to services/repositories/usecases/providers/whatever.
+4. Service/Repository/Usecase/Provider - 
 
 
 
