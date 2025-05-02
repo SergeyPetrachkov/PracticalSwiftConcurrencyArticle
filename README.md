@@ -609,8 +609,154 @@ It's a tricky question to answer: where should the Swift Concurrency start in my
 
 For today's article let's imagine that we don't have any 3d party frameworks like TCA or RIBs and we are well modularised, so we can take a vertical module (that contains some user flows) and improvise as we like.
 
+During the early days of adopting Swift Concurrency in my current job, we had a lot of debates whether View layer should be an entry point or some other layer.
+At first, I was convinced that we must start and retain our tasks ourselves. And we should do it somewhere outside of our ViewControllers or SwiftUI views. In other words, my conviction was that we need to start unstructured Tasks in ViewModels or Interactors (of VIP stack). This way we could "test everything".
+Along the way, I realised I was kinda wrong. The more I played around with SwiftUI, Swift Testing and other modern tech, the more I realised that.
 
-### Swift UI Entry point
+### Initial POV on Entry point
+
+In this series of articles we're still building the Corporate Testflight :) So, let's imagine that we have a screen with the list of builds/versions.
+In VIP we have ViewController aka View, Interactor, Presenter and Workers. Interactor was my goto entry point.
+
+```Swift
+@MainActor
+final class VersionsListInteractor {
+
+    // MARK: - Injectables
+    private let projectId: Int
+    private let presenter: VersionsListPresenting
+    private let worker: VersionsListWorkerProtocol
+    weak var output: VersionsListInteractorOutput?
+
+    // MARK: - State
+    private(set) var currentTask: Task<Void, Never>?
+    private var versions: [Version] = []
+
+    // MARK: - Init
+    init(projectId: Int, presenter: VersionsListPresenting, worker: VersionsListWorkerProtocol) {
+        self.projectId = projectId
+        self.presenter = presenter
+        self.worker = worker
+    }
+
+    // MARK: - Class interface
+
+    func viewDidLoad() {
+        currentTask = Task {
+            await fetchData()
+        }
+    }
+
+    func viewWillUnload() {
+        currentTask?.cancel()
+    }
+
+    // MARK: - Private logic
+    private func fetchData() async {
+        do {
+            let data = try await worker.fetchData(projectId: projectId)
+            versions = data.versions
+            presenter.showData(versions: data.versions, project: data.project)
+        } catch {
+            presenter.showError(error)
+        }
+    }
+
+    func didSelect(row: VersionsListModels.VersionViewModel) {
+        guard let version = versions.first(where: { $0.id == row.id }) else {
+            return assertionFailure("Inconsistency in data")
+        }
+        output?.didEmitEvent(.requestVersionDetails(version: version))
+    }
+}
+```
+This way the Interactor (or a ViewModel had it been MVVM) is an entry point. View layer talks to it in a synchronous manner. And it doesn't look bad. But it's because it's a sample project, and I'm in control of all components and I can easilly put `Sendable` as I please and assign proper actor isolations. In real projects it's way more nuanced.
+But even in the sample projects testing becomes messy.
+
+```Swift
+import XCTest
+
+@MainActor
+final class VersionsListInteractorTests: XCTestCase {
+
+    func test_whenCallSucceeds_showDataGetsCalled() async {
+        let env = Environment()
+        let sut = env.makeSUT()
+        let sample = (
+            project: Project(id: 2, name: "Name"),
+            versions: [Version(id: UUID(), buildNumber: 1, associatedTicketKeys: [])]
+        )
+        await env.worker.fetchDataMock.returns(sample)
+        let expectation = expectation(description: "Show data expectation")
+        env.presenter.showDataMock.didCall = { _ in
+            expectation.fulfill()
+        }
+
+        sut.viewDidLoad()
+
+        await fulfillment(of: [expectation], timeout: 2)
+        XCTAssertTrue(env.presenter.showDataMock.called)
+        XCTAssertEqual(env.presenter.showDataMock.input.0, sample.versions)
+        XCTAssertEqual(env.presenter.showDataMock.input.1, sample.project)
+    }
+
+    func test_whenCallFails_showErrorGetsCalled() async {
+        let env = Environment()
+        let sut = env.makeSUT()
+        let error = NSError(domain: "com.tests.error", code: -1)
+        await env.worker.fetchDataMock.throws(error)
+        let expectation = expectation(description: "Show error expectation")
+        env.presenter.showErrorMock.didCall = { _ in
+            expectation.fulfill()
+        }
+        sut.viewDidLoad()
+        await fulfillment(of: [expectation], timeout: 2)
+        XCTAssertTrue(env.presenter.showErrorMock.called)
+    }
+
+    func test_whenVersionClicked_outputGetsCalled() async {
+        let env = Environment()
+        let mockOutput = MockVersionsListInteractorOutput()
+        let sut = env.makeSUT(output: mockOutput)
+        let sampleVersion = Version(id: UUID(), buildNumber: 1, associatedTicketKeys: [])
+        let sample = (
+            project: Project(id: 2, name: "Name"),
+            versions: [sampleVersion]
+        )
+        await env.worker.fetchDataMock.returns(sample)
+        let expectation = expectation(description: "Show data expectation")
+        env.presenter.showDataMock.didCall = { _ in
+            expectation.fulfill()
+        }
+
+        sut.viewDidLoad()
+        await fulfillment(of: [expectation], timeout: 2)
+
+        sut.didSelect(row: .init(id: sampleVersion.id, title: "", subtitle: ""))
+        XCTAssertTrue(mockOutput.didEmitEventMock.called)
+    }
+}
+
+@MainActor
+private final class Environment {
+
+    let presenter = MockVersionsListPresenter()
+    let worker = MockVersionsListWorker()
+
+    func makeSUT(output: VersionsListInteractorOutput? = nil) -> VersionsListInteractor {
+        let sut = VersionsListInteractor(projectId: 1, presenter: presenter, worker: worker)
+        sut.output = output
+        return sut
+    }
+}
+```
+
+As you can see, I have to set up expectations and rely on Presenter being called, because my code is asynchronous. The class interface is synchronous, so I don't get when the async job is finished. If I want to test task cancellation, then it's even more trouble.
+This particular thing also prevents me from using Swift Testing, because it's very nice when everything is async-await, but fails miserably when you need to test good old closures. I even tried to argue with the creators of Testing here: https://forums.swift.org/t/testing-closure-based-asynchronous-apis/73705 :D 
+
+Well, with time more and more insights are coming and the more I worked with SwiftUI, the more I realised, that even though it's a very opninionated framework, it has quite some convenient things to learn. I also digged deeper in TCA (which I'm not a fan of still).
+
+### Interlude. SwiftUI
 
 If you're using SwiftUI and you're targeting recent iOS versions, then Apple have done the heavy lifting for you. 
 
@@ -630,39 +776,406 @@ struct MyView: View {
 
 Apple suggest using View layer of your app to be an entry point to the concurrency. And if you're using `task(id:priority:_:)` you get Tasks cancellation for free. 
 
-### UIKit Entry point
+### My updated POV on Entry point to Swift Concurrency
 
-But if you're using UIKit, the heavy lifting is on you. Depending on how you organize the presentation layer management, you need to choose which part of it will become the entry point. Is it going to be a ViewController (A View layer)? Or a ViewModel from MVVM, Interactor from VIP, Presenter from VIPER, or any other fancy word of your choosing.
+Now I believe that developers will benefit from starting Swift Concurrency from the View layer. And ViewModel/Interactor/Store(from Uniflow) should have `async` interface.
 
-It is important to align with your team(s) on how you see it. Some may say that the tests coverage of Tasks cancellation is an absolute must. Then moving it from View layer makes sense, because testing Views is usually more cumbersome than other layers.
+* View layer is nowadays often tested with snapshot tests, so you'll get your coverage just fine.
+* Your VM/I/X-layer is async ==> simplest possible tests + Swift Testing unclocked.
+* Sendable pollution is not necessarily needed, unless you're using async lets and task groups.
 
-### Paradigm shift
-
-Remember I mentioned a paradigm shift in the beginning? Here we go. 
-If you choose your View layer to be an entry point, then it may make sense to get your ViewModels or Interactors an async interface. (Note: I'm omitting any kind of actor-isolation code deliberately.)
-What does it mean to us as developers? It means that we enetered the Concurrency really early and we can benefit from async-awaiting our way up (or down, depending on how you look at it) the scene stack. If our networking code, or repositories, or image processors, or any other things that are usually async use Swift Concurrency, then we can simply those async entities. No need to create unstructured tasks anywhere else. And a nice bonus with SwiftUI, the tasks will be cancelled automatically by SwiftUI engine when the view goes off the hierarchy. This will cover 90% of our requirements.
+SwiftUI View or UIKit ViewController are isolated to the main actor by Apple. Isolate your VM/Interactor/Store(TCA/Uniflow) to the main actor and in the latest versions of Swift there will be no overhead of `await` within the same isolation domain. Win-win.
+Let's take a look at Versions List updated to SwiftUI with newer insights:
 
 ```Swift
-@Observable
-final class TasksViewModel {
-    private(set) var items: [Item]
-    // ...
-    func start() async {
-       items = await repository.fetchAll()
-    }
-}
+// MainActor isolation is in Store protocol
+final class VersionsListStore: ObservableObject, Store {
 
-struct TasksView: View {
+	typealias State = VersionList.State
+	typealias Environment = VersionList.Environment
+	typealias Action = VersionList.Action
 
-  var viewModel: TasksViewModel
+	let environment: VersionList.Environment
 
-  var body: some View {
-     List(viewModel.items) { item
-        ItemRow(item)
-     }
-     .task {
-        await viewModel.start()
-     }
-  }
+	@Published var state: State
+
+	private var versions: [Version] = []
+	private var project: Project?
+
+	init(initialState: State, environment: Environment) {
+		self.state = initialState
+		self.environment = environment
+	}
+
+	func send(_ action: VersionList.Action) async {
+		print("'action: \(action)' >> 'state: \(state)'")
+		switch action {
+		case .start:
+			await loadData(enterLoadingState: true)
+		case .refresh(let fromScratch):
+			await loadData(enterLoadingState: fromScratch)
+		case .tapItem(let rowState):
+			guard let version = versions.first(where: { $0.id == rowState.id }) else {
+				return
+			}
+			environment.output(.selectedVersion(version))
+		case .tapQR:
+			environment.output(.qrRequested)
+		case .search, .debouncedSearch:
+			guard let project else {
+				state.contentState = .failed(.init(localizedDescription: "No project is loaded. Try refreshing."))
+				return
+			}
+			let filteredVersions = await filterVersions(searchTerm: state.seachTerm, versions: versions)
+			let mappedContent = await map(project: project, versions: filteredVersions)
+			state.contentState = .loaded(mappedContent)
+		}
+		print("state >> '\(state)'")
+	}
+
+	private func loadData(enterLoadingState: Bool) async {
+		do {
+			if enterLoadingState {
+				state.contentState = .loading
+			}
+			let (project, builds) = try await environment.usecase.execute(projectId: environment.project)
+
+			try Task.checkCancellation()
+
+			let mappedContent = await map(project: project, versions: builds)
+
+			try Task.checkCancellation()
+
+			versions = builds
+			self.project = project
+			state.contentState = .loaded(mappedContent)
+		} catch is CancellationError {
+			print("Store cancelled")
+		} catch {
+			state.contentState = .failed(.init(localizedDescription: error.localizedDescription))
+		}
+	}
+
+	nonisolated private func map(project: Project, versions: [Version]) async -> VersionList.State.Content {
+		let rows = environment.mapper.map(versions: versions)
+		return .init(projectTitle: project.name, versions: rows)
+	}
+
+	nonisolated private func filterVersions(searchTerm: String, versions: [Version]) async -> [Version] {
+		guard !searchTerm.isEmpty else {
+			return versions
+		}
+		let lowercasedSearchTerm = searchTerm.lowercased()
+		return versions.filter {
+			$0.associatedTicketKeys.contains { $0.lowercased() == lowercasedSearchTerm }
+				|| ($0.releaseNotes ?? "").contains(lowercasedSearchTerm)
+		}
+	}
 }
 ```
+
+And the View looks like this:
+```Swift
+struct VersionsListContainer: View {
+
+	@ObservedObject private var store: VersionsListStore
+	@State private var currentSearchTask: Task<Void, any Error>?
+
+	init(store: VersionsListStore) {
+		self.store = store
+	}
+
+	var body: some View {
+		contentView
+	}
+
+	@ViewBuilder
+	private var contentView: some View {
+		switch store.state.contentState {
+		case .loading:
+			skeleton
+				.navigationBarTitleDisplayMode(.inline)
+				.toolbar {
+					ToolbarItem(placement: .principal) {
+						HStack {
+							ProgressView()
+							Text("Loading").font(.headline)
+						}
+					}
+				}
+				.task {
+					await store.send(.start)
+				}
+		case .loaded(let content):
+			VersionsList(state: content.versions) { tappedItem in
+				Task {
+					await store.send(.tapItem(tappedItem))
+				}
+			}
+			.searchable(text: $store.state.seachTerm, prompt: "Jira keys or release notes")
+			.onSubmit(of: .search) {
+				Task {
+					await store.send(.search)
+				}
+			}
+			.onChange(of: store.state.seachTerm) {
+				// here: we hold a reference to a task, we cancel the existing one and we also debounce via Task sleep
+				currentSearchTask?.cancel()
+				currentSearchTask = Task {
+					try await Task.sleep(for: .milliseconds(300))
+					try Task.checkCancellation()
+					await store.send(.debouncedSearch)
+				}
+			}
+			.refreshable {
+				await store.send(.refresh(fromScratch: false))
+			}
+			.navigationTitle(content.projectTitle)
+			.toolbar {
+				toolbarContent
+			}
+		case .failed(let error):
+			ContentUnavailableView {
+				Label("An error has occured", systemImage: "exclamationmark.triangle")
+			} description: {
+				Text("Error details: \(error).\nTry again.")
+			} actions: {
+				Button("Reload") {
+					Task {
+						await store.send(.refresh(fromScratch: true))
+					}
+				}
+				.buttonBorderShape(.roundedRectangle)
+				.buttonStyle(.bordered)
+			}
+			.navigationTitle("Oops...")
+			.toolbar {
+				toolbarContent
+			}
+		}
+	}
+
+    // some other stuff here
+}
+```
+
+As you can see, there's some logic in the View layer, like debouncing and cancelling the ongoing task. Debouncing can move to the Store after some changes. Cancelling the ongoing search could also be implemented a bit differently, because we have `task(id:)`.
+But even so, code like this is easier to read. And waaaay easier to test:
+
+```Swift
+@Suite("Versions List Store")
+@MainActor
+struct VersionsListStoreTests {
+
+	@MainActor
+	struct Environment {
+		let projectID = 1
+		let usecase = MockFetchProjectAndVersionsUsecase()
+		let mapper = MockRowMapper()
+		var output: @MainActor (VersionList.Environment.Output) -> Void = { _ in }
+
+		func makeSUT() -> VersionsListStore {
+			VersionsListStore(
+				initialState:
+					VersionList
+					.State(),
+				environment:
+					VersionsListStore
+					.Environment(
+						project: projectID,
+						usecase: usecase,
+						mapper: mapper,
+						output: output
+					)
+			)
+		}
+	}
+
+	@Test(
+		"Start and Refresh Happy path",
+		arguments: [
+			VersionList.Action.start,
+			VersionList.Action.refresh(fromScratch: true),
+			VersionList.Action.refresh(fromScratch: false)
+		]
+	)
+	func sendResultsInLoadedState(action: VersionList.Action) async {
+		let env = Environment()
+		let expectedProject = Project(id: 1, name: "Name")
+		let expectedVersions = [Version(id: UUID(), buildNumber: 1, associatedTicketKeys: [])]
+		env.usecase.executeMock.returns((expectedProject, expectedVersions))
+		let expectedRows = [VersionList.RowState(id: UUID(), title: "", subtitle: "")]
+		env.mapper.mapMock.returns(expectedRows)
+		let sut = env.makeSUT()
+
+		await sut.send(action)
+
+		#expect(env.usecase.executeMock.input == env.projectID)
+		#expect(env.usecase.executeMock.calledOnce)
+		#expect(env.mapper.mapMock.calledOnce)
+		#expect(env.mapper.mapMock.input == expectedVersions)
+		#expect(sut.state.seachTerm == "")
+		#expect(sut.state.contentState == .loaded(VersionList.State.Content(projectTitle: "Name", versions: expectedRows)))
+	}
+
+	@Test(
+		"Start and Refresh Unhappy path",
+		arguments: [
+			VersionList.Action.start,
+			VersionList.Action.refresh(fromScratch: true),
+			VersionList.Action.refresh(fromScratch: false)
+		]
+	)
+	func sendFailureResultsInFailedState(action: VersionList.Action) async {
+		let env = Environment()
+		let testError = NSError(domain: "test", code: -1, userInfo: [NSLocalizedDescriptionKey: "Ha-ha!"])
+
+		env.usecase.executeMock.throws(testError)
+		let sut = env.makeSUT()
+
+		await sut.send(.start)
+
+		#expect(env.usecase.executeMock.input == env.projectID)
+		#expect(env.usecase.executeMock.calledOnce)
+		#expect(!env.mapper.mapMock.called)
+		#expect(sut.state.seachTerm == "")
+		#expect(sut.state.contentState == .failed(VersionList.State.ErrorState(localizedDescription: "Ha-ha!")))
+	}
+
+	@Test(
+		"Search Happy Path",
+		arguments: [
+			VersionList.Action.search,
+			VersionList.Action.debouncedSearch
+		]
+	)
+	func searchHappyPath(action: VersionList.Action) async {
+		let env = Environment()
+		let expectedProject = Project(id: 1, name: "Name")
+		let expectedVersions = [Version(id: UUID(), buildNumber: 1, associatedTicketKeys: ["Key"])]
+		env.usecase.executeMock.returns((expectedProject, expectedVersions))
+		let expectedRows = [VersionList.RowState(id: UUID(), title: "", subtitle: "")]
+		env.mapper.mapMock.returns(expectedRows)
+		let sut = env.makeSUT()
+		sut.state.seachTerm = "Key"
+
+		await sut.send(.start)  // to load the project
+		await sut.send(action)
+
+		#expect(env.usecase.executeMock.input == env.projectID)
+		#expect(env.usecase.executeMock.calledOnce)
+		#expect(env.mapper.mapMock.count == 2)
+		#expect(env.mapper.mapMock.input == expectedVersions)
+		#expect(sut.state.seachTerm == "Key")
+		#expect(sut.state.contentState == .loaded(VersionList.State.Content(projectTitle: "Name", versions: expectedRows)))
+	}
+
+	@Test(
+		"Search No Project Loaded",
+		arguments: [
+			VersionList.Action.search,
+			VersionList.Action.debouncedSearch
+		]
+	)
+	func searchUnhappyPath(action: VersionList.Action) async {
+		let env = Environment()
+		let sut = env.makeSUT()
+		sut.state.seachTerm = "Key"
+
+		await sut.send(action)
+
+		#expect(env.mapper.mapMock.count == 0)
+		#expect(sut.state.seachTerm == "Key")
+		#expect(sut.state.contentState == .failed(.init(localizedDescription: "No project is loaded. Try refreshing.")))
+	}
+
+	@Test
+	func tapVersionHappyPath() async {
+		var env = Environment()
+		let expectedProject = Project(id: 1, name: "Name")
+		let uuid = UUID()
+		let existingVersion = Version(id: uuid, buildNumber: 1, associatedTicketKeys: ["Key"])
+		let expectedVersions = [existingVersion]
+		env.usecase.executeMock.returns((expectedProject, expectedVersions))
+		let existingRow = VersionList.RowState(id: uuid, title: "", subtitle: "")
+		let expectedRows = [existingRow]
+		env.mapper.mapMock.returns(expectedRows)
+		var outputCalledCorrectly = false
+		env.output = { argument in
+			switch argument {
+			case .qrRequested:
+				outputCalledCorrectly = false
+			case .selectedVersion(let version):
+				outputCalledCorrectly = version.id == existingVersion.id
+			}
+		}
+		let sut = env.makeSUT()
+
+		await sut.send(.start)  // to load versions
+		await sut.send(.tapItem(existingRow))
+
+		#expect(outputCalledCorrectly)
+	}
+
+	@Test
+	func tapNonExistantVersion() async {
+		var env = Environment()
+
+		var outputHandledCorrectly = true
+		env.output = { _ in
+			outputHandledCorrectly = false
+		}
+		let sut = env.makeSUT()
+
+		await sut.send(.tapItem(.init(id: UUID(), title: "", subtitle: "")))
+
+		#expect(outputHandledCorrectly)
+	}
+
+	@Test
+	func tapQR() async {
+		var env = Environment()
+
+		var outputCalledCorrectly = false
+		env.output = { argument in
+			switch argument {
+			case .qrRequested:
+				outputCalledCorrectly = true
+			case .selectedVersion:
+				outputCalledCorrectly = false
+			}
+		}
+		let sut = env.makeSUT()
+
+		await sut.send(.tapQR)
+
+		#expect(outputCalledCorrectly)
+	}
+
+	@Test
+	func taskCancellation() async {
+		let env = Environment()
+		let expectedProject = Project(id: 1, name: "Name")
+		let expectedVersions = [Version(id: UUID(), buildNumber: 1, associatedTicketKeys: [])]
+		env.usecase.executeMock.returns((expectedProject, expectedVersions))
+		let expectedRows = [VersionList.RowState(id: UUID(), title: "", subtitle: "")]
+		env.mapper.mapMock.returns(expectedRows)
+		let sut = env.makeSUT()
+
+		let task = Task { await sut.send(.start) }
+		task.cancel()
+
+		#expect(sut.state.contentState == .loading)
+	}
+}
+```
+
+### And what about navigation?
+Well, I use Coordinators and for the time being they are synchronous. I tried to play around with the idea of making coordinators async, and I liked it. But I'm not sure how it'll fit bigger projects.
+
+### Conclusion
+
+After a couple of years of adopting huge projects to constantly changing Swift Concurrency, I tend to believe, that View layer is the most convenient place to start Swift Concurrency and make the rest of the entities async.
+You can take a look at the Sample project here: https://github.com/SergeyPetrachkov/CorporateTestflight/ and decide for yourself :) 
+
+Next Swift Concurrency article is going to be dedicated to AsyncStream, AsyncSequence, AsyncChannel and other ways to build a bridge between old and new worlds.
