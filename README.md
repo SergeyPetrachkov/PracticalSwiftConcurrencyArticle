@@ -600,6 +600,16 @@ Next time we'll discuss what is the best place for an entry point to Swift Concu
 
 For now, let's find an entry point to the Concurrency for our iOS projects.
 
+## Entry Point to the Swift Concurrency
+
+It's a tricky question to answer: where should the Swift Concurrency start in my app? The answer depends on many factors: 
+* How old is your app and what tech stack is it based on?
+* How big is your team and how big is your app? (in huge projects one cannot simply convert to the new concurrency model overnight)
+* What kind of patterns and/or frameworks do you use to organize and architect your project?
+
+For today's article let's imagine that we don't have any 3d party frameworks like TCA or RIBs and we are well modularised, so we can take a vertical module (that contains some user flows) and improvise as we like.
+
+
 ### Swift UI Entry point
 
 If you're using SwiftUI and you're targeting recent iOS versions, then Apple have done the heavy lifting for you. 
